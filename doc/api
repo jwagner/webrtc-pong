@@ -1,0 +1,16 @@
+rtc_options = { "iceServers": [{ "url": "stun:stun.example.org" }] }
+connection_options = {
+      'optional': [{ 'RtpDataChannels': true }]
+    }
+
+var peer = new Peer('ws://../broker'),
+    connection = peer.connect([id], [secret]),
+    channel = connection.channel();
+
+channel.send('')
+channel.sendReliable('')
+channel.on('data')
+channel.on('close')
+
+.listen(function(connection){
+});

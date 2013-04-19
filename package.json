@@ -1,0 +1,24 @@
+{
+  "name": "webrtc-pong",
+  "version": "0.0.0",
+  "description": "ERROR: No README.md file found!",
+  "main": "src/pong.js",
+  "dependencies": {
+    "coffeeify": "~0.4.0",
+    "buildfresh": "~0.1.2",
+    "underscore": "~1.4.4",
+    "express": "~3.2.0",
+    "browserify-middleware": "~1.7.1",
+    "ws": "~0.4.25",
+    "q": "~0.9.3"
+  },
+  "devDependencies": {
+    "grunt-contrib-livereload": "~0.1.2"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": "",
+  "author": "",
+  "license": "NONE"
+}
