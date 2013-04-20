@@ -19,6 +19,7 @@ exports.EventEmitter.prototype = {
                 events[i](event);
             }
         }
+        return this;
     },
     on: function(type, listener) {
         if(!(type in this._events)){
@@ -27,6 +28,7 @@ exports.EventEmitter.prototype = {
         else {
             this._events[type].push(listener);
         }
+        return this;
     }, 
     once: function(type, listener) {
         var this_ = this;
@@ -39,10 +41,11 @@ exports.EventEmitter.prototype = {
     }, 
     off: function (type, listener) {
         var events = this._events[type];
-        if(events === undefined) return;
+        if(events === undefined) return this;
         var index = events.indexOf(listener);
-        if(index === -1) return;
+        if(index === -1) return this;
         events.splice(index, 1);
+        return this;
     }
 };
 

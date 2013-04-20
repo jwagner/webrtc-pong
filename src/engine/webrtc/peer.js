@@ -2,148 +2,111 @@ var RTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnecti
 
 var assert = require('assert'),
     q = require('q'),
+    _ = require('underscore'),
+    EventEmitter = require('../events').EventEmitter,
     log = console.log.bind(console),
     rtc_options = { "iceServers": [{ "url": "stun:stun.example.org" }] },
     connection_options = {
           'optional': [{ 'RtpDataChannels': true }]
     };
 
-function promise(f, args){
-    f = f.bind.apply(f, args);
-    return q.promise(f.bind(args)); 
-}
-
-
 function Peer(brokerURL, options){
+    EventEmitter.call(this);
+
     brokerURL = brokerURL || 'ws://' + window.location.host + '/webrtc-broker';
     options = options || {};
-    this.ws = new WebSocket(brokerURL);
-    var wsOpenDeferred = q.defer();
-    this.ready = wsOpenDeferred.promise.then(function() {
-        this._identify();
-    }.bind(this));
-    this.ws.onopen = function() {
-        wsOpenDeferred.resolve(true);
-    };
-    this.ws.onerror = function(e) {
-        console.warn(e);
-        wsOpenDeferred.reject(e);
-    };
-    this.ws.onmessage = this._brokerMessage.bind(this);
+    this.broker = new Broker(brokerURL, options);
+    this.id = this.broker.id;
+    this.broker.on('message', this.onBrokerMessage.bind(this));
 
     this.connections = Object.create(null);
-    this.waiting = Object.create(null);
-    this.onconnect = log;
-    this.error = (function(e) {
-        console.warn(e);
-    }).bind(this);
-    this.id = options.id || ~~(Math.random()*100000000);
-    this.state = '';
+    this.listening = false;
 }
-Peer.prototype = {
-    _identify: function(args) {
-        this._brokerSend(['identify', this.id]);
-    },
-    _brokerSend: function(args) {
-        log('brokerSend', args);
-        this.ws.send(JSON.stringify(args));
-    },
-    _brokerMessage: function(e) {
-        var args = JSON.parse(e.data),
-            event = args[0];
-        log('brokerMessage', args);
-        if(event === 'err'){
-            console.warn('Broker error', args);
+module.exports = Peer;
+_.extend(Peer.prototype, EventEmitter.prototype, {
+    onBrokerMessage: function(event) {
+        var sender = event.from,
+            msg = event.data,
+            cmd = msg[0];
+
+        if(cmd === 'offer'){
+            if(this.listening){
+                this.accept(sender, msg[1]);
+            }
+            else {
+                console.warn('got unexpected offer', sender, msg);
+            }
         }
-        else if(event === 'msg') {
-            var sender = args[1],
-                msg = args[2],
-                cmd = msg[0];
-                if(cmd === 'offer'){
-                    assert(this.state === 'LISTEN', 'is listening for offers');
-                    this.accept(sender, msg[1]);
-                }
-                if(cmd === 'candidate'){
-                    if(sender in this.connections)
-                        this.connections[sender].onIceCandidate(msg[1]);
-                }
-                else if(sender in this.waiting){
-                    this.waiting[sender].resolve(msg);
-                }
+        if(cmd === 'candidate'){
+            if(sender in this.connections) {
+                this.connections[sender].addCandidate(msg[1]);
+            }
+            else {
+                console.warn('got candidate from unknown sender', sender);
+            }
         }
-    },
-    _brokerSendCandidate: function(id, e) {
-        if(!e.candidate) return;
-        this._brokerSend(['msg', id, ['candidate', e.candidate]]);
     }, 
-    _waitForBrokerMessageFrom: function(id) {
-        this.waiting[id] = q.defer();
-        // add timeout?
-        return this.waiting[id].promise.fin(function() {
-            delete this.waiting[id];
-        }.bind(this));
-    },
+    getConnection: function(id) {
+        var c = this.connections[id] = new Connection();
+        c.on('candidate', this.broker.sendCandidate.bind(this.broker, id));
+        return c;
+    }, 
     connect: function(id) {
-        this.state = 'CONNECTING';
-        var connection = this.connections[id] = new Connection(this._brokerSendCandidate.bind(this, id));
-        return this.ready
+        var connection = this.getConnection(id);
+        return this.broker.ready
                 .then(function() {
                     return connection.createOffer();
                 }.bind(this))
                 .then(function(description) {
-                    this._brokerSend(['msg', id, ['offer', description]]);
-                    return this._waitForBrokerMessageFrom(id);
+                    this.broker.sendMessage(id, ['offer', description]);
+                    return this.broker.waitForAccept(id);
                 }.bind(this))
                 .then(function(msg) {
-                    assert(msg[0] === 'accept', 'peer must accept');
+                    assert.equal(msg[0],'accept', 'peer must accept');
                     return connection.connect(msg[1]);
-                });
+                }).thenResolve(connection.ready);
     },
     listen: function() {
-        this.state = 'LISTEN';
-        return this.ready;
+        this.listening = true;
+        return this.broker.ready;
     },
     accept: function(id, offer) {
-        var connection = this.connections[id] = new Connection(this._brokerSendCandidate.bind(this, id));
+        var connection = this.getConnection(id);
         connection.acceptOffer(offer)
             .then(function(answer) {
-                this._brokerSend(['msg', id, ['accept', answer]]);
-                return connection.waitForChannel();
+                this.broker.sendMessage(id, ['accept', answer]);
             }.bind(this))
-            .then(function(channel) {
-                this.onconnect(channel);
-            }.bind(this)).done();
-    } 
-};
+            .done(function() {
+                this.emit('connection', connection);
+            }.bind(this));
+    }
+});
 
-function Connection(onice){
+function Connection(){
+    EventEmitter.call(this);
+
     var pc = this.pc = new RTCPeerConnection(rtc_options, connection_options);
     pc.ondatachannel = this.onDataChannel.bind(this);
-    pc.onicecandidate = onice;
-        this.state = '';
+    pc.onicecandidate = this.emit.bind(this, 'candidate');
+
+    this.readyDeferred = q.defer();
+    this.ready = this.readyDeferred.promise;
 }
-Connection.prototype = {
-    onIceCandidate: function(description) {
+_.extend(Connection.prototype, EventEmitter.prototype, {
+    addCandidate: function(description) {
         if(!description) return;
-        console.log(description.candidate);
+        //console.log(description.candidate);
         var candidate = new RTCIceCandidate(description);
         this.pc.addIceCandidate(candidate);
     }, 
     onDataChannel: function(e) {
-        log(e);
         this.dc = e.channel;
-        this.dc.onopen = log;
-        this.dc.onmessage = log;
-        this.dc.onerror = log;
-
-        if(this.waitForChannel) {
-            this.waitForChannel.resolve(e.channel);
-        }
+        this.once('open', this.readyDeferred.resolve.bind(this.readyDeferred, this));
+        this.once('error', this.readyDeferred.reject.bind(this.readyDeferred));
+        this.dc.onopen = this.emit.bind(this, 'open');
+        this.dc.onmessage = this.emit.bind(this, 'message');
+        this.dc.onerror = this.emit.bind(this, 'error');
     }, 
-    waitForChannel: function() {
-        this.waitingForChannel = q.defer();
-        return this.waitingForChannel.promise;
-    },
     acceptOffer: function(offer) {
         var rtcdesc = new RTCSessionDescription(offer),
             pc = this.pc;
@@ -161,15 +124,12 @@ Connection.prototype = {
             pc = this.pc;
         return q.promise(pc.setRemoteDescription.bind(pc, rtcdesc))
             .then(function() {
-            }.bind(this))
-            .thenResolve(this); 
+                return this;
+            }.bind(this));
     },
     createOffer: function () {
-        this.state = 'CONNECTING';
         this.dc = this.pc.createDataChannel("unreliable", {reliable: false});
-        this.dc.onopen = log;
-        this.dc.onmessage = log;
-        this.dc.onerror = log;
+        this.onDataChannel({channel: this.dc});
 
         var pc = this.pc;
         return q.promise(pc.createOffer.bind(pc))
@@ -177,6 +137,81 @@ Connection.prototype = {
                         return q.promise(pc.setLocalDescription.bind(pc, description)).
                             thenResolve(description);
                     });
+    },
+    send: function(data) {
+        this.dc.send(data);
     }
-};
-module.exports = Peer;
+});
+
+function Broker(url, options){
+    EventEmitter.call(this);
+
+    options = options || {};
+    this.id = options.id || ~~(Math.random()*100000000);
+
+    this.ws = new WebSocket(url);
+    var readyDeferred = q.defer();
+    this.ready = readyDeferred.promise.then(function() {
+        this.identify();
+    }.bind(this));
+    this.ws.onopen = function() {
+        readyDeferred.resolve(true);
+    };
+    this.ws.onerror = function(e) {
+        readyDeferred.reject(e);
+    };
+
+    this.ws.onmessage = this.onmessage.bind(this);
+
+    this.waitingForAccept = Object.create(null);
+}
+_.extend(Broker.prototype, EventEmitter.prototype, {
+    identify: function(args) {
+        this.send(['identify', this.id]);
+    },
+    send: function(args) {
+        var json = JSON.stringify(args);
+        log('Broker.send', json);
+        this.ws.send(json);
+    },
+    sendMessage: function(to, data) {
+        this.send(['msg', to, data]);
+    },
+    sendCandidate: function(id, e) {
+        if(!e.candidate) return;
+        this.sendMessage(id, ['candidate', e.candidate]);
+    }, 
+    waitForAccept: function(id) {
+        var waiting = this.waitingForAccept;
+        waiting[id] = q.defer();
+        // add timeout?
+        return waiting[id].promise
+            .fin(function() {
+                delete waiting[id];
+            });
+    },
+    onmessage: function(e) {
+        log('Broker.onmessage', e.data);
+        var msg = JSON.parse(e.data),
+            type = msg[0];
+        if(type === 'err'){
+            console.warn('Broker error', msg);
+            this.emit('error', msg);
+        }
+        else if(type === 'msg') {
+            var sender = msg[1],
+                data = msg[2];
+
+            if(data[0] === 'accept' && sender in this.waitingForAccept){
+                this.waitingForAccept[sender].resolve(data);
+            }
+
+            this.emit('message', {from: sender, data: data});
+        }
+        else {
+            console.warn('Unknown Broker message', e.data);
+        }
+    }
+});
+
+

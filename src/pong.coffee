@@ -109,18 +109,27 @@ clock = new Clock()
 input = new InputHandler(canvas)
 input.blur()
 game = new Game()
+log = console.log.bind(console)
 
 if(window.location.hash)
     peer = new Peer()
     window.setTimeout((() ->
-        peer.connect(window.location.hash.substr(1)).then(
-            (connection) ->
-                console.log(connection)
-                window.connection = connection
-        ).done()
+        id = window.location.hash.substr(1)
+        peer.connect(id).done (connection) ->
+            connection.on 'message', log
+            console.log('connection ready', connection)
+            window.connection = connection
+            connection.send('hello from client')
     ), 2000)
 else
     peer = new Peer(null, {id: 'foo'})
+    peer.on('connection', (connection) ->
+        connection.ready.done (connection) ->
+            connection.on 'message', log
+            console.log('peer connection ready', connection)
+            window.connection = connection
+            connection.send('hello from server')
+    )
     peer.listen()
     #window.location.hash = '#' + peer.id
 window.peer = peer
