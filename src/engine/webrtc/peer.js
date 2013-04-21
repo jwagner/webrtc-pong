@@ -5,8 +5,13 @@ var assert = require('assert'),
     _ = require('underscore'),
     EventEmitter = require('../events').EventEmitter,
     log = console.log.bind(console),
-    rtc_options = { "iceServers": [{ "url": "stun:stun.example.org" }] },
-    connection_options = {
+    rtc_options = {
+        "iceServers": [
+            // see http://www.html5rocks.com/en/tutorials/webrtc/basics/
+            { "url": "stun:stun.l.google.com:19302" }
+        ]
+    },
+    media_constraints = {
           'optional': [{ 'RtpDataChannels': true }]
     };
 
@@ -85,7 +90,7 @@ _.extend(Peer.prototype, EventEmitter.prototype, {
 function Connection(){
     EventEmitter.call(this);
 
-    var pc = this.pc = new RTCPeerConnection(rtc_options, connection_options);
+    var pc = this.pc = new RTCPeerConnection(rtc_options, media_constraints);
     pc.ondatachannel = this.onDataChannel.bind(this);
     pc.onicecandidate = this.emit.bind(this, 'candidate');
 

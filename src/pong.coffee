@@ -26,18 +26,6 @@ class Rect
 
 rect = (x, y, width, height) -> new Rect(v2(x, y), width, height)
 
-# center -> new center of circle after moveing
-rect_circle_collision = (rect, circle, center) ->
-    new_rect = new Rect(rect.center, rect.width+circle.radius*2,
-        rect.height+circle.radius*2)
-    if not (center.x < new_rect.left or center.x > new_rect.right or center.y > new_rect.bottom or center.y < new_rect.top)
-        # find axis of collision
-        if new_rect.left < circle.center.x < new_rect.right
-            'y'
-        else if new_rect.top < circle.center.y < circle.center.top
-            'x'
-        else
-            'xy'
 class V2
     constructor: (@x, @y) ->
 
@@ -85,9 +73,6 @@ class V2
         "v2(#{@x}, #{@y})"
 
 random = Math.random
-sqrt = Math.sqrt
-V2.random = ->
-    new V2(random()-0.5, random()-0.5).normalize()
 v2 = (x, y) -> new V2(x, y)
 
 
@@ -110,10 +95,14 @@ class Game
         @ball = new Ball()
 
     start: () ->
-        @ball.velocity.x = (0.5+Math.random())*200
-        @ball.velocity.y = (Math.random()-0.5)*200
-        if Math.random() > 0.5
-            @ball.velocity.x *= -1
+        if master
+            @ball.velocity.x = (0.5+random())*200
+            @ball.velocity.y = (random()-0.5)*200
+            if random() > 0.5
+                @ball.velocity.x *= -1
+        else
+            @ball.velocity.x = 0
+            @ball.velocity.y = 0
         @ball.center = v2(WIDTH/2, HEIGHT/2)
 
     tick: (td) ->
@@ -203,7 +192,8 @@ net = () ->
             game.right.recalc()
         else
             game.score = d.score
-            game.ball.center.x = d.ball.center.x
+            game.ball.center.x = game.ball.center.x*0.8 + d.ball.center.x*0.2
+            game.ball.center.y = game.ball.center.y*0.8 + d.ball.center.y*0.2
             game.ball.center.y = d.ball.center.y
             game.ball.velocity.x = d.ball.velocity.x
             game.ball.velocity.y = d.ball.velocity.y
